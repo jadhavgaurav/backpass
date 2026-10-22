@@ -7,6 +7,7 @@ import vm from "node:vm";
 
 import {
   applyEdit,
+  applyEdits,
   buildProposal,
   DEFAULT_MAX_EDITS,
   effectiveMaxEdits,
@@ -168,6 +169,73 @@ test("an edit whose find text is missing or ambiguous is refused, never guessed 
     () => applyEdit("- a\n- a\n- a\n", { id: "e1", file: "AGENTS.md", find: "- a\n- a\n", replace: "" }),
     /appears 2 times/,
   );
+});
+
+test("an ambiguous find names every occurrence by line so the re-prompt can say where", () => {
+  const doubled = `${MEMORY_TEXT}\n- Whenever a PR is mentioned, include its URL.\n`;
+  assert.throws(
+    () =>
+      applyEdit(doubled, {
+        id: "e1",
+        file: "AGENTS.md",
+        find: "- Whenever a PR is mentioned, include its URL.",
+        replace: "x",
+      }),
+    /appears 2 times in AGENTS\.md \(lines 5, 9\); must be unique/,
+  );
+});
+
+// An earlier edit copies a bullet; a later edit rewrites the original. Each `find` is unique
+// in the file as read, but not once the earlier edit has landed.
+const COPY_TEXT = [
+  ...Array.from({ length: 6 }, (_, i) => `- Rule number ${i + 1} is unique.`),
+  "- Keep transactions short.",
+  "- Rule number 7 is unique.",
+  "- Rule number 8 is unique.",
+  "",
+].join("\n");
+const copyAndRewrite = memoryEdit((t) =>
+  t
+    .replace("- Rule number 1 is unique.\n", "- Rule number 1 is unique.\n- Keep transactions short.\n")
+    .replace("- Keep transactions short.\n- Rule number 7", "- Keep every transaction short.\n- Rule number 7")
+    .replace("- Rule number 8 is unique.", "- Rule number 8 is unique, and checked."),
+);
+const copyAnnotation = {
+  edits: [claim(["H1"], { title: "copy" }), claim(["H2"], { title: "rewrite" }), claim(["H3"], { title: "tail" })],
+};
+
+test("a non-unique find after an earlier edit lands is a violation that says where the text repeats", () => {
+  const { violations, proposal } = gate({ text: COPY_TEXT, edit: copyAndRewrite, annotation: copyAnnotation });
+  assert.equal(violations.length, 1, violations.join("\n"));
+  assert.match(violations[0], /appears 2 times in AGENTS\.md \(lines 2, 8\); must be unique/);
+  assert.match(violations[0], /an earlier change in this proposal repeats it/);
+  assert.equal(proposal.edits.find((e) => e.title === "rewrite").applicable, false);
+});
+
+test("with dropAmbiguous only the edit whose find is still ambiguous is dropped, named, and the rest is kept", () => {
+  const { violations, proposal, dropped, memoryFile } = gate({
+    text: COPY_TEXT,
+    edit: copyAndRewrite,
+    annotation: copyAnnotation,
+    context: { dropAmbiguous: true },
+  });
+  assert.deepEqual(violations, []);
+  assert.deepEqual(
+    proposal.edits.map((e) => e.title),
+    ["copy", "tail"],
+  );
+  assert.equal(dropped.length, 1);
+  assert.equal(dropped[0].title, "rewrite");
+  assert.match(dropped[0].reason, /appears 2 times in AGENTS\.md \(lines 2, 8\)/);
+  assert.ok(
+    proposal.notes.some((n) => /dropped edit .* \(rewrite\)/.test(n)),
+    proposal.notes.join("\n"),
+  );
+  const applied = applyEdits(
+    memoryFile.text,
+    proposal.edits.map((e) => e),
+  );
+  assert.ok(applied.includes("and checked.") && !applied.includes("every transaction"));
 });
 
 test("a measured edit applies each of its hunks, and refuses once the file has drifted", () => {
