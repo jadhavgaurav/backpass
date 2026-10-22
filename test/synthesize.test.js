@@ -238,7 +238,7 @@ test("root and nested synthesis both refuse direct writes to the other memory fi
       (err) =>
         err instanceof UserError &&
         err.message.includes(
-          `synthesis changed ${pass === "root" ? nestedPath : "AGENTS.md"} in the repository directly`,
+          `${pass === "root" ? nestedPath : "AGENTS.md"} changed in the repository during synthesis`,
         ),
     );
     assert.equal(fs.readFileSync(target, "utf8"), "# Direct write\n");
@@ -440,7 +440,49 @@ test("a harness that writes to the repository instead of the staging copy is ref
   );
   await assert.rejects(run(), (err) => {
     assert.ok(err instanceof UserError);
-    assert.match(err.message, /synthesis changed AGENTS\.md in the repository directly/);
+    assert.match(err.message, /AGENTS\.md changed in the repository during synthesis/);
+    return true;
+  });
+});
+
+test("a change to a watched repo file during synthesis is reported as observed, not blamed on the harness", async () => {
+  const { repo, run } = setup({ edit: {} });
+  // The fake cannot tell a concurrent editor from a harness: it just writes the repo file.
+  fs.writeFileSync(
+    process.env.FAKE_ACPX_SCRIPT,
+    JSON.stringify({
+      edit: { [path.join(repo.root, "AGENTS.md")]: { replace: [[TWO_ITEMS, ""]] } },
+      annotations: [{ reply: { edits: [] } }],
+    }),
+  );
+  await assert.rejects(run(), (err) => {
+    assert.ok(err instanceof UserError);
+    assert.match(err.message, /AGENTS\.md changed in the repository during synthesis; nothing was proposed/);
+    assert.doesNotMatch(err.message, /harness|staging copy|directly/);
+    assert.match(err.hint, /another process \(a concurrent agent session or a scheduled job\)/);
+    assert.doesNotMatch(err.hint, /cannot be trusted/);
+    return true;
+  });
+});
+
+test("a repo file that now equals the staging copy is still attributed to the harness", async () => {
+  const { repo, run } = setup({ edit: {} });
+  const edit = { replace: [[TWO_ITEMS, ""]] };
+  fs.writeFileSync(
+    process.env.FAKE_ACPX_SCRIPT,
+    JSON.stringify({
+      edit: { "AGENTS.md": edit, [path.join(repo.root, "AGENTS.md")]: edit },
+      annotations: [{ reply: { edits: [] } }],
+    }),
+  );
+  await assert.rejects(run(), (err) => {
+    assert.ok(err instanceof UserError);
+    assert.match(err.message, /AGENTS\.md changed in the repository during synthesis/);
+    assert.match(
+      err.message,
+      /AGENTS\.md now matches the staging copy .*so the synthesis harness likely wrote it directly/,
+    );
+    assert.match(err.hint, /cannot be trusted with the synthesis role/);
     return true;
   });
 });
@@ -724,7 +766,7 @@ test("a skill target stages that skill alone; a staged write to AGENTS.md is ref
       annotations: [{ reply: { edits: [] } }],
     }),
   );
-  await assert.rejects(direct.run(), /synthesis changed AGENTS\.md in the repository directly/);
+  await assert.rejects(direct.run(), /AGENTS\.md changed in the repository during synthesis/);
 });
 
 test("an ordinary in-repo skill stays fingerprinted, whether or not the run narrows to it", async () => {
@@ -747,7 +789,7 @@ test("an ordinary in-repo skill stays fingerprinted, whether or not the run narr
 
     await assert.rejects(guarded.run(), (err) => {
       assert.ok(err instanceof UserError, `${target ? "targeted" : "surface"} run: ${err}`);
-      assert.match(err.message, /synthesis changed \.agents\/skills\/db\/SKILL\.md in the repository directly/);
+      assert.match(err.message, /\.agents\/skills\/db\/SKILL\.md changed in the repository during synthesis/);
       return true;
     });
   }
@@ -774,7 +816,7 @@ test("a staged skill that resolves outside the repository is reported as such, n
       err.message.includes(`${skillPath} changed during synthesis; that path resolves outside the repository`),
       err.message,
     );
-    assert.doesNotMatch(err.message, /in the repository directly/);
+    assert.doesNotMatch(err.message, /in the repository during synthesis/);
     assert.match(err.hint, /another process changed the shared library mid-run/);
     return true;
   });
