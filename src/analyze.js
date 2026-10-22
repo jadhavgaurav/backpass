@@ -342,6 +342,11 @@ async function analyzeOne({
       usage: usageRecord(ranWith, result),
       distilled,
     };
+  } catch (err) {
+    // Marks that this transcript reached the model-call attempt, regardless of how it
+    // failed, so callers can tell it apart from a failure that never got this far (#203).
+    err.modelCallAttempted = true;
+    throw err;
   } finally {
     if (rawFile) releaseRawFile(rawFile);
   }
@@ -497,7 +502,7 @@ export async function analyzeTranscripts({
   let done = 0;
   const evidenceTotals = { positive: 0, negative: 0, gaps: 0 };
   const analyzePending = async (transcript, _index, slot) => {
-    /** @type {"ok" | "skipped" | "failed"} */
+    /** @type {"ok" | "skipped" | "failed" | "failed-attempted"} */
     let outcome = "failed";
     const base = {
       transcript: transcriptMetadata(transcript),
@@ -552,6 +557,7 @@ export async function analyzeTranscripts({
       summary.failed += 1;
       warn(`${transcript.harness} ${transcriptLabel(transcript)}: ${err.message}`);
       state.writeEvidence(transcript, { ...base, status: "failed", error: err.message });
+      outcome = err.modelCallAttempted ? "failed-attempted" : "failed";
     } finally {
       done += 1;
       emitProgress("analyze:tick", {
@@ -573,12 +579,15 @@ export async function analyzeTranscripts({
   // jobs > 1 the first wave of helpers can abandon that lock and every session then fails
   // (#203). Run transcripts one at a time until one has made a model call, so a due
   // refresh finishes inside a single long-lived process before the fan-out. A skipped
-  // trivial session made no call, so it does not count. Not a retry: nothing re-runs.
+  // trivial session made no call, so it does not count; nor does a failure that never
+  // reached the model call (e.g. a corrupted transcript failing to read or distill).
+  // Not a retry: nothing re-runs.
   let queue = pending;
   if (pick.agent === "claude" && config.jobs > 1) {
     let called = false;
     while (!called && queue.length) {
-      called = (await analyzePending(queue[0], 0, 0)) !== "skipped";
+      const outcome = await analyzePending(queue[0], 0, 0);
+      called = outcome === "ok" || outcome === "failed-attempted";
       queue = queue.slice(1);
     }
   }
