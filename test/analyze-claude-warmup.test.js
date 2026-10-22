@@ -45,6 +45,13 @@ if (argv.includes("sessions") && argv.includes("new")) {
   const session = /Do the (\\S+) work\\./.exec(prompt)[1];
   log("prompt " + session);
   setTimeout(() => {
+    // A session id starting with "fail" returns unparseable text: the model call itself
+    // completes (so it is a genuine call attempt), but analysis fails afterward.
+    if (session.startsWith("fail")) {
+      log("failed " + session);
+      process.stdout.write("not json\\n");
+      process.exit(0);
+    }
     log("done " + session);
     process.stdout.write(JSON.stringify({ positive: [], negative: [], gaps: [] }) + "\\n");
     process.exit(0);
@@ -140,6 +147,23 @@ test("a trivial session that makes no model call does not count as the warm-up",
     ["new", "prompt", "done"],
     calls.join("\n"),
   );
+});
+
+test("when the first analysis call fails, it still finishes alone and the rest run together", () => {
+  const calls = analyze("claude", 4, [{ id: "failing1" }, ...ids("e1", "e2", "e3", "e4")]);
+  const firstEnd = calls.findIndex((line) => line.startsWith("failed ") || line.startsWith("done "));
+  assert.ok(firstEnd > 0 && calls[firstEnd].startsWith("failed "), calls.join("\n"));
+  assert.deepEqual(
+    calls.slice(0, firstEnd + 1).map((line) => line.split(" ")[0]),
+    ["new", "prompt", "failed"],
+    `nothing else may start while the first (failing) call runs:\n${calls.join("\n")}`,
+  );
+  const afterFirst = calls.slice(firstEnd + 1);
+  assert.ok(
+    afterFirst.filter((line) => line.startsWith("prompt ")).length > 1,
+    `the remaining calls should overlap, not run one at a time:\n${calls.join("\n")}`,
+  );
+  assert.equal(afterFirst.filter((line) => line.startsWith("done ")).length, 4, "the rest still run and succeed");
 });
 
 test("other agents keep the full fan-out from the first call", () => {
