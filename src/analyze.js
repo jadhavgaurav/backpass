@@ -520,6 +520,7 @@ export async function analyzeTranscripts({
       phase: "distill",
     });
 
+    let modelCallMade = false;
     try {
       const result = await analyzeOne({
         transcript,
@@ -532,19 +533,21 @@ export async function analyzeTranscripts({
         skillIndex,
         alsoLoaded,
       });
-      outcome = result.status === "skipped" ? "skipped" : "ok";
+      modelCallMade = result.status !== "skipped";
       if (result.status === "skipped") {
-        summary.skipped += 1;
         state.writeEvidence(transcript, { ...base, status: "skipped", reason: result.reason });
+        outcome = "skipped";
+        summary.skipped += 1;
       } else {
-        summary.analyzed += 1;
-        summary.usage.push(result.usage);
         state.writeEvidence(transcript, {
           ...base,
           status: "ok",
           stats: result.distilled.stats,
           ...result.evidence,
         });
+        outcome = "ok";
+        summary.analyzed += 1;
+        summary.usage.push(result.usage);
         evidenceTotals.positive += result.evidence.positive.length;
         evidenceTotals.negative += result.evidence.negative.length;
         evidenceTotals.gaps += result.evidence.gaps.length;
@@ -557,7 +560,7 @@ export async function analyzeTranscripts({
       summary.failed += 1;
       warn(`${transcript.harness} ${transcriptLabel(transcript)}: ${err.message}`);
       state.writeEvidence(transcript, { ...base, status: "failed", error: err.message });
-      outcome = err.modelCallAttempted ? "failed-attempted" : "failed";
+      outcome = modelCallMade || err.modelCallAttempted ? "failed-attempted" : "failed";
     } finally {
       done += 1;
       emitProgress("analyze:tick", {
