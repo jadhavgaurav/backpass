@@ -503,7 +503,7 @@ export async function analyzeTranscripts({
   const evidenceTotals = { positive: 0, negative: 0, gaps: 0 };
   const analyzePending = async (transcript, _index, slot) => {
     /** @type {"ok" | "skipped" | "failed" | "failed-attempted"} */
-    let outcome = "failed";
+    let outcome;
     const base = {
       transcript: transcriptMetadata(transcript),
       memoryHash,
