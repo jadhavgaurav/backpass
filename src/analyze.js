@@ -496,7 +496,9 @@ export async function analyzeTranscripts({
 
   let done = 0;
   const evidenceTotals = { positive: 0, negative: 0, gaps: 0 };
-  await pool(pending, config.jobs, async (transcript, _index, slot) => {
+  const analyzePending = async (transcript, _index, slot) => {
+    /** @type {"ok" | "skipped" | "failed"} */
+    let outcome = "failed";
     const base = {
       transcript: transcriptMetadata(transcript),
       memoryHash,
@@ -525,6 +527,7 @@ export async function analyzeTranscripts({
         skillIndex,
         alsoLoaded,
       });
+      outcome = result.status === "skipped" ? "skipped" : "ok";
       if (result.status === "skipped") {
         summary.skipped += 1;
         state.writeEvidence(transcript, { ...base, status: "skipped", reason: result.reason });
@@ -562,7 +565,24 @@ export async function analyzeTranscripts({
         info(`${color.dim(`  ${done}/${pending.length} analyzed`)}`);
       }
     }
-  });
+    return outcome;
+  };
+
+  // Claude refreshes a due OAuth token under a lock its owner must keep touching until the
+  // refresh ends. Each call here starts with a short-lived `sessions new` helper, so at
+  // jobs > 1 the first wave of helpers can abandon that lock and every session then fails
+  // (#203). Run transcripts one at a time until one has made a model call, so a due
+  // refresh finishes inside a single long-lived process before the fan-out. A skipped
+  // trivial session made no call, so it does not count. Not a retry: nothing re-runs.
+  let queue = pending;
+  if (pick.agent === "claude" && config.jobs > 1) {
+    let called = false;
+    while (!called && queue.length) {
+      called = (await analyzePending(queue[0], 0, 0)) !== "skipped";
+      queue = queue.slice(1);
+    }
+  }
+  await pool(queue, config.jobs, analyzePending);
 
   if (summary.quotesNotInTrace) {
     warn(
