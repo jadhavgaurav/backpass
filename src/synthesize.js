@@ -170,9 +170,10 @@ function harnessCountsOf(transcripts) {
  * fingerprinted path can still resolve outside the repository - that is the ordinary
  * user-scope layout - so a change there is reported for what it is rather than as a direct
  * repository edit. A change inside the repository is reported as what was observed, since
- * a concurrent editor in a shared workspace looks the same as a harness (#199). A configured `skillSearchPaths` root is the one withheld reason that
- * stays fingerprinted anyway: its read-only promise is not "backpass will never write
- * this," it is "nothing may ever write this," so a change there must still fail the run.
+ * a concurrent editor in a shared workspace looks the same as a harness (#199). A
+ * configured `skillSearchPaths` root is the one withheld reason that stays fingerprinted
+ * anyway: its read-only promise is not "backpass will never write this," it is "nothing
+ * may ever write this," so a change there must still fail the run.
  */
 function assertRepoUntouched(repo, before, workspace) {
   const after = repoFingerprint(repo, Object.keys(before));
