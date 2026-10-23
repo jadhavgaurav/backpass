@@ -847,6 +847,35 @@ test("an edit after the staging rebuild is still reported even when an earlier o
   });
 });
 
+test("a direct write by a candidate that then falls through is reported, not absorbed by the next rebuild", async () => {
+  const { repo, config, run } = setup({ edit: {} });
+  const skill = path.join(repo.root, ".agents/skills/db/SKILL.md");
+  fs.mkdirSync(path.dirname(skill), { recursive: true });
+  fs.writeFileSync(skill, DB_SKILL);
+  // The first candidate edits the repository skill and is then given up on (an expired login,
+  // say); the second candidate must not start from a staging copy that includes that write.
+  config.agents = {
+    resolve: async () => pick,
+    withFallthrough: async (_role, fn) => {
+      await fn(pick);
+      return fn(pick);
+    },
+  };
+  fs.writeFileSync(
+    process.env.FAKE_ACPX_SCRIPT,
+    JSON.stringify({
+      edit: { [skill]: DB_SKILL.replace("Keep transactions short.", "Keep every transaction short.") },
+      annotations: [{ reply: { edits: [] } }],
+    }),
+  );
+
+  await assert.rejects(run(), (err) => {
+    assert.ok(err instanceof UserError);
+    assert.match(err.message, /\.agents\/skills\/db\/SKILL\.md changed in the repository during synthesis/);
+    return true;
+  });
+});
+
 test("a write-through to a memory file configured by absolute path is still attributed to the harness", async () => {
   const { repo, run } = setup({ edit: {} });
   const absolute = path.join(repo.root, "AGENTS.md");

@@ -708,13 +708,18 @@ export async function synthesizeProposal({
       return this.session.prompt(args);
     },
   };
+  let attempted = false;
   const editResult = await config.agents.withFallthrough("synthesis", async (current) => {
     ranWith = current.agent;
     holder.ranWith = current.agent;
     chosen = current;
     if (current !== pick) notes.push(`synthesis fell through to ${current.agent} (${current.model})`);
+    // A candidate after the first runs behind a harness that may already have written to the
+    // repository; rebasing over that write would hide it, so it is reported before the rebuild.
+    if (attempted) assertRepoUntouched(repo, fingerprint, workspace);
     workspace = prepareWorkspace(workspaceOptions);
     rebaseFingerprint(fingerprint, workspace);
+    attempted = true;
     progress("edit", { attempt: 1 });
     holder.session = await openSession({
       agent: current.agent,
