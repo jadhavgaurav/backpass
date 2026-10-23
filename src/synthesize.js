@@ -21,6 +21,8 @@ import {
   READ_ONLY_SEARCH_PATH,
   measureWorkspace,
   prepareWorkspace,
+  rebaseFingerprint,
+  repoFilePath,
   repoFingerprint,
   workspacePathFor,
 } from "./workspace.js";
@@ -191,8 +193,7 @@ function assertRepoUntouched(repo, before, workspace) {
     const staged = workspace.stagedPaths?.get(file) ?? workspacePathFor(file);
     try {
       return (
-        fs.readFileSync(path.join(workspace.root, staged), "utf8") ===
-        fs.readFileSync(path.join(repo.root, file), "utf8")
+        fs.readFileSync(path.join(workspace.root, staged), "utf8") === fs.readFileSync(repoFilePath(repo, file), "utf8")
       );
     } catch {
       return false;
@@ -713,6 +714,7 @@ export async function synthesizeProposal({
     chosen = current;
     if (current !== pick) notes.push(`synthesis fell through to ${current.agent} (${current.model})`);
     workspace = prepareWorkspace(workspaceOptions);
+    rebaseFingerprint(fingerprint, workspace);
     progress("edit", { attempt: 1 });
     holder.session = await openSession({
       agent: current.agent,
